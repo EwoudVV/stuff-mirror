@@ -19,7 +19,6 @@
   }
   .wrap{max-width:640px;margin:0 auto;padding:16px 12px 60px;position:relative}
   header{padding-bottom:8px;margin-bottom:8px}
-  header .top{font-size:12px;color:var(--faint);display:flex;justify-content:space-between}
   h1{font-size:22px;margin:6px 0 2px;font-weight:bold}
   .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:10px 0}
   .levels{display:flex;gap:6px;flex-wrap:wrap}
@@ -37,6 +36,13 @@
     padding:4px 10px;cursor:pointer;
   }
   .btn:active{transform:translateY(1px)}
+  .btn.on{background:#111;color:#fff}
+  #tray{display:flex;gap:6px;flex-wrap:wrap;align-items:center;min-height:36px}
+  .chip{font:inherit;font-size:15px;min-width:38px;height:34px;background:#fff;border:1px solid #111;cursor:pointer}
+  .chip.held{background:#111;color:#fff}
+  .traycount{font-size:12px;color:#777}
+  .bg{fill:#fff;fill-opacity:0}
+  .hint-dot{pointer-events:none}
   #msg{font-size:13px;min-height:20px;color:#333}
   #msg.err{color:var(--red)}
   #msg.win{color:var(--green)}
@@ -64,7 +70,6 @@
 <body>
 <div class="wrap">
   <header>
-    <div class="top"><span>science class</span><span>per. 3</span></div>
     <h1>connect the bonds</h1>
   </header>
 
@@ -73,13 +78,17 @@
   </div>
 
   <div class="row">
-    <strong id="lname" style="font-weight:normal;font-style:italic">1 · hydrogen gas</strong>
+    <strong id="lname" style="font-weight:normal">1. h2</strong>
     <span style="flex:1"></span>
+    <button class="btn" id="mMove">move</button>
+    <button class="btn" id="mBond">bond</button>
     <button class="btn" id="undo">undo</button>
     <button class="btn" id="clear">clear</button>
   </div>
 
-  <div id="msg">click one atom then another one in the same row.</div>
+  <div class="row"><div id="tray"></div></div>
+
+  <div id="msg">tap a letter, tap a square.</div>
 
   <svg id="board" role="application" aria-label="bond puzzle board"></svg>
 
@@ -87,10 +96,11 @@
 
   <details>
     <summary>how to play</summary>
-    <p>click or drag from one atom to another in the same row/column with nothing between them.<br>
-    each click adds a line. 1, then 2, then 3, then it clears.<br>
+    <p>move mode: tap a letter, tap a square to drop it. tap a placed atom then another square to shift it (its lines clear). tap the tray to take one back.<br>
+    bond mode: tap two in the same row/column with nothing between them.<br>
+    each tap adds a line. 1, then 2, then 3, then it clears.<br>
     lines can't cross. numbers on top say how many are left.<br>
-    done = all zeros and everything joined up.<br>
+    done = everything placed, all zeros, everything joined up.<br>
     click the middle of a line to take one back. u = undo, r = clear.<br>
     after 11 it just keeps making them up, harder each time.</p>
   </details>
@@ -202,6 +212,13 @@ function genEndless(idx){
       var options=[],lim=Math.min(cells.length,90);
       for(c=0;c<lim;c++){
         var x=cells[c][0],y=cells[c][1];
+        var onBond=false;
+        for(var bk in sol){
+          var bp=bk.split("-").map(Number),BA=atoms[bp[0]],BB=atoms[bp[1]];
+          if(BA.x===BB.x&&x===BA.x&&y>Math.min(BA.y,BB.y)&&y<Math.max(BA.y,BB.y)){onBond=true;break;}
+          if(BA.y===BB.y&&y===BA.y&&x>Math.min(BA.x,BB.x)&&x<Math.max(BA.x,BB.x)){onBond=true;break;}
+        }
+        if(onBond)continue;
         for(j2=0;j2<atoms.length;j2++){
           var J=atoms[j2];
           if(J.x!==x&&J.y!==y)continue;
@@ -279,21 +296,25 @@ function genEndless(idx){
     if(tot/atoms.length<needBranch)continue;
     var la=[];
     for(var q=0;q<atoms.length;q++)la.push({x:atoms[q].x,y:atoms[q].y,el:els[q]});
-    return {name:(idx+1)+".",hint:"made up. "+la.length+" atoms.",w:w,h:h,atoms:la};
+    return {name:(idx+1)+".",hint:"made up. "+la.length+" to place.",w:w,h:h,atoms:la,sol:sol};
   }
-  var n2=target,fw=Math.min(9,n2),fa=[],fx=0,fy=0,fdir=1,i2;
+  var n2=target,fw=Math.min(9,n2),fa=[],fx=0,fy=0,fdir=1,i2,fsol={};
   for(i2=0;i2<n2;i2++){
     fa.push({x:fx,y:fy,el:(i2===0||i2===n2-1)?"H":"O"});
+    if(i2>0)fsol[(i2-1)+"-"+i2]=1;
     if(i2===n2-1)break;
     if(fx+fdir>=0&&fx+fdir<fw){fx+=fdir;}
     else{fy+=2;fdir*=-1;}
   }
-  return {name:(idx+1)+".",hint:"made up. "+fa.length+" atoms.",w:fw,h:fy+1,atoms:fa};
+  return {name:(idx+1)+".",hint:"made up. "+fa.length+" to place.",w:fw,h:fy+1,atoms:fa,sol:fsol};
 }
 var FIXED_N=LEVELS.length, genCache={};
 function cur(){ return idx<FIXED_N?LEVELS[idx]:(genCache[idx]||(genCache[idx]=genEndless(idx))); }
 
 var idx = 0, bonds = {}, hist = [], selected = -1;
+var mode = "move", held = null, placed = [], moveDown = -1;
+function snap(){return {b:JSON.parse(JSON.stringify(bonds)),p:placed.map(function(q){return q?{x:q.x,y:q.y}:null;})};}
+function restore(s){bonds=s.b;placed=s.p;held=null;selected=-1;}
 var done = {};
 try{
   var s = JSON.parse(localStorage.getItem("covbonds")||"{}");
@@ -320,21 +341,22 @@ function remaining(i){ return VALENCE[atoms()[i].el]-countAt(i); }
 
 function say(t, cls){ msg.textContent=t; msg.className=cls||""; }
 
-/* geometry helpers */
+/* geometry helpers (all use placed positions) */
 function blocked(a,b){
-  var A=atoms()[a], B=atoms()[b], at=atoms();
+  var A=placed[a], B=placed[b], at=atoms();
+  if(!A||!B) return "place it first";
   if(a===b) return "same one";
   if(A.x!==B.x && A.y!==B.y) return "has to be same row/column";
   for(var i=0;i<at.length;i++){
-    if(i===a||i===b) continue;
-    var C=at[i];
-    if(A.x===B.x && C.x===A.x && C.y>Math.min(A.y,B.y) && C.y<Math.max(A.y,B.y)) return C.el+" is in the way";
-    if(A.y===B.y && C.y===A.y && C.x>Math.min(A.x,B.x) && C.x<Math.max(A.x,B.x)) return C.el+" is in the way";
+    if(i===a||i===b||!placed[i]) continue;
+    var C=placed[i];
+    if(A.x===B.x && C.x===A.x && C.y>Math.min(A.y,B.y) && C.y<Math.max(A.y,B.y)) return at[i].el+" is in the way";
+    if(A.y===B.y && C.y===A.y && C.x>Math.min(A.x,B.x) && C.x<Math.max(A.x,B.x)) return at[i].el+" is in the way";
   }
   return null;
 }
 function segsCross(a,b,c,d){
-  var A=atoms()[a],B=atoms()[b],C=atoms()[c],D=atoms()[d];
+  var A=placed[a],B=placed[b],C=placed[c],D=placed[d];
   // sharing an endpoint is fine
   if(a===c||a===d||b===c||b===d) return false;
   var h1=(A.y===B.y), h2=(C.y===D.y);
@@ -361,7 +383,7 @@ function tryAdd(a,b){
   if(cur>=3){ say("max is 3, clearing it", "err"); delBond(a,b,true); return true; }
   if(remaining(a)<=0 || remaining(b)<=0){ say("that one is full", "err"); return false; }
   if(crosses(a,b)){ say("can't cross lines", "err"); return false; }
-  hist.push(JSON.parse(JSON.stringify(bonds)));
+  hist.push(snap());
   bonds[k]=cur+1;
   say(remaining(a)===0&&remaining(b)===0 ? "ok" : atoms()[a].el+" left "+remaining(a)+", "+atoms()[b].el+" left "+remaining(b));
   afterMove();
@@ -369,7 +391,7 @@ function tryAdd(a,b){
 }
 function delBond(a,b,all){
   var k=key(a,b); if(!bonds[k]) return;
-  hist.push(JSON.parse(JSON.stringify(bonds)));
+  hist.push(snap());
   if(all){ delete bonds[k]; } else { bonds[k]--; if(bonds[k]<=0) delete bonds[k]; }
   afterMove();
 }
@@ -383,8 +405,74 @@ function connected(){
 }
 function won(){
   var at=atoms();
-  for(var i=0;i<at.length;i++) if(countAt(i)!==VALENCE[at[i].el]) return false;
+  for(var i=0;i<at.length;i++){
+    if(!placed[i]) return false;
+    if(countAt(i)!==VALENCE[at[i].el]) return false;
+  }
   return connected();
+}
+function trayLeft(){var n=0;for(var i=0;i<atoms().length;i++)if(!placed[i])n++;return n;}
+function setMode(m){mode=m;held=null;selected=-1;draw();}
+function chipTap(i){
+  if(placed[i])return;
+  mode="move";
+  if(held&&held.from==="tray"&&held.i===i){held=null;say(trayLeft()+" left");}
+  else{held={from:"tray",i:i};say(atoms()[i].el+" — tap a square");}
+  selected=-1;draw();
+}
+function grabAtom(i){
+  if(held&&held.from==="board"&&held.i===i){held=null;say(trayLeft()+" left");}
+  else{held={from:"board",i:i};say(atoms()[i].el+" — tap a square");}
+  draw();
+}
+function atomAt(cell){
+  for(var i=0;i<placed.length;i++){var q=placed[i];if(q&&q.x===cell.x&&q.y===cell.y)return i;}
+  return -1;
+}
+function clearBondsOf(i){
+  for(var k in bonds){var p=k.split("-").map(Number);if(p[0]===i||p[1]===i)delete bonds[k];}
+}
+function unplace(i){
+  hist.push(snap());
+  clearBondsOf(i);
+  placed[i]=null;held=null;selected=-1;
+  say("back in the tray. "+trayLeft()+" left");draw();
+}
+function doDrop(cell){
+  if(!held)return;
+  var occ=atomAt(cell);
+  if(occ!==-1&&!(held.from==="board"&&occ===held.i)){say("taken");return;}
+  if(held.from==="tray"){
+    hist.push(snap());
+    placed[held.i]={x:cell.x,y:cell.y};held=null;
+    if(trayLeft()===0){setMode("bond");say("all down. connect them");}
+    else{say(trayLeft()+" left");draw();}
+  }else{
+    var i=held.i;
+    if(placed[i]&&placed[i].x===cell.x&&placed[i].y===cell.y){held=null;draw();return;}
+    hist.push(snap());
+    clearBondsOf(i);
+    placed[i]={x:cell.x,y:cell.y};held=null;
+    say("moved. its lines cleared");draw();
+  }
+}
+function eventCell(e){
+  try{
+    var pt=svg.createSVGPoint();pt.x=e.clientX;pt.y=e.clientY;
+    var m=svg.getScreenCTM();if(!m)return null;
+    var p=pt.matrixTransform(m.inverse());
+    var L=cur();
+    var gx=Math.round((p.x-PAD)/CELL),gy=Math.round((p.y-PAD)/CELL);
+    if(gx<0||gy<0||gx>=L.w||gy>=L.h)return null;
+    return {x:gx,y:gy};
+  }catch(err){return null;}
+}
+function onBoardDown(e){
+  if(mode==="move"){
+    if(!held)return;
+    var cell=eventCell(e);
+    if(cell)doDrop(cell);
+  }else{selected=-1;draw();}
 }
 function afterMove(){
   draw();
@@ -403,16 +491,27 @@ function draw(){
   svg.setAttribute("viewBox","0 0 "+(px(L.w-1)+PAD)+" "+(px(L.h-1)+PAD+8));
   svg.innerHTML="";
   var NS="http://www.w3.org/2000/svg";
+  var bg=document.createElementNS(NS,"rect");
+  bg.setAttribute("x",0);bg.setAttribute("y",0);
+  bg.setAttribute("width",px(L.w-1)+PAD);bg.setAttribute("height",px(L.h-1)+PAD+8);
+  bg.setAttribute("class","bg");
+  bg.addEventListener("pointerdown",onBoardDown);
+  svg.appendChild(bg);
+  var occ={};
+  for(var oi=0;oi<placed.length;oi++)if(placed[oi])occ[placed[oi].x+","+placed[oi].y]=1;
   // grid dots
   for(var gx=0;gx<L.w;gx++) for(var gy=0;gy<L.h;gy++){
     var c=document.createElementNS(NS,"circle");
-    c.setAttribute("cx",px(gx)); c.setAttribute("cy",px(gy)); c.setAttribute("r",1.2);
+    c.setAttribute("cx",px(gx)); c.setAttribute("cy",px(gy));
+    var open=held&&!occ[gx+","+gy];
+    c.setAttribute("r",open?2.6:1.2);
     c.setAttribute("class","hint-dot"); svg.appendChild(c);
   }
   // bonds
   for(var k in bonds){
     var p=k.split("-").map(Number), n=bonds[k];
-    var A=at[p[0]],B=at[p[1]];
+    var A=placed[p[0]],B=placed[p[1]];
+    if(!A||!B)continue;
     var x1=px(A.x),y1=px(A.y),x2=px(B.x),y2=px(B.y);
     var dx=x2-x1, dy=y2-y1, len=Math.sqrt(dx*dx+dy*dy);
     var ux=dx/len, uy=dy/len, ox=-uy, oy=ux;
@@ -429,15 +528,17 @@ function draw(){
     var h=document.createElementNS(NS,"line");
     h.setAttribute("x1",x1);h.setAttribute("y1",y1);h.setAttribute("x2",x2);h.setAttribute("y2",y2);
     h.setAttribute("class","bond-hit");
-    (function(a,b){ h.addEventListener("pointerdown", function(e){ e.stopPropagation(); delBond(a,b,false); say("took one back"); }); })(p[0],p[1]);
+    (function(a,b){ h.addEventListener("pointerdown", function(e){ e.stopPropagation(); if(mode==="move"){var cell=eventCell(e);if(held&&cell)doDrop(cell);} else {delBond(a,b,false);say("took one back");} }); })(p[0],p[1]);
     svg.appendChild(h);
   }
-  // atoms
+  // atoms (only placed ones are on the board)
   for(var i=0;i<at.length;i++){
+    if(!placed[i])continue;
     (function(i){
       var g=document.createElementNS(NS,"g");
-      g.setAttribute("class","atom"+(remaining(i)===0?" satisfied":"")+(selected===i?" selected":""));
-      g.setAttribute("transform","translate("+px(at[i].x)+","+px(at[i].y)+")");
+      var isSel=(selected===i)||(held&&held.from==="board"&&held.i===i);
+      g.setAttribute("class","atom"+(remaining(i)===0?" satisfied":"")+(isSel?" selected":""));
+      g.setAttribute("transform","translate("+px(placed[i].x)+","+px(placed[i].y)+")");
       var cir=document.createElementNS(NS,"circle");
       cir.setAttribute("r",20); cir.setAttribute("class","body"); g.appendChild(cir);
       var t=document.createElementNS(NS,"text");
@@ -447,11 +548,37 @@ function draw(){
       r.setAttribute("text-anchor","middle"); r.setAttribute("dy","-24"); r.setAttribute("font-size","11");
       r.textContent = remaining(i)===0 ? "done" : remaining(i);
       g.appendChild(r);
-      g.addEventListener("pointerdown", function(e){ e.preventDefault(); onAtomDown(i); });
-      g.addEventListener("pointerup", function(e){ e.preventDefault(); onAtomUp(i); });
+      g.addEventListener("pointerdown", function(e){ e.preventDefault(); e.stopPropagation(); if(mode==="move"){moveDown=i;} else {onAtomDown(i);} });
+      g.addEventListener("pointerup", function(e){ e.preventDefault(); e.stopPropagation(); if(mode==="move"){if(moveDown===i)grabAtom(i);moveDown=-1;} else {onAtomUp(i);} });
       svg.appendChild(g);
     })(i);
   }
+  renderTray();
+  renderMode();
+}
+function renderTray(){
+  var t=document.getElementById("tray"); if(!t)return;
+  t.innerHTML="";
+  var at=atoms();
+  for(var i=0;i<at.length;i++){
+    if(placed[i])continue;
+    (function(i){
+      var b=document.createElement("button");
+      b.textContent=at[i].el;
+      b.className="chip"+(held&&held.from==="tray"&&held.i===i?" held":"");
+      b.addEventListener("click",function(){chipTap(i);});
+      t.appendChild(b);
+    })(i);
+  }
+  var s=document.createElement("span");
+  s.className="traycount";
+  s.textContent=trayLeft()===0?"all placed":trayLeft()+" to place";
+  t.appendChild(s);
+}
+function renderMode(){
+  var a=document.getElementById("mMove"),b=document.getElementById("mBond");
+  if(a)a.className="btn"+(mode==="move"?" on":"");
+  if(b)b.className="btn"+(mode==="bond"?" on":"");
 }
 
 var dragFrom=-1;
@@ -467,16 +594,17 @@ function onAtomUp(i){
   else { selected=i; }
   dragFrom=-1; draw();
 }
-svg.addEventListener("pointerleave", function(){ dragFrom=-1; });
+svg.addEventListener("pointerleave", function(){ dragFrom=-1; moveDown=-1; });
 
 function loadLevel(i){
   if(i<0)i=0;
-  idx=i; bonds={}; hist=[]; selected=-1; save();
+  idx=i; bonds={}; hist=[]; selected=-1; held=null; mode="move"; save();
+  placed=atoms().map(function(){return null;});
   msg.onclick=null; msg.style.cursor="";
   lname.textContent=cur().name;
   hint.textContent=cur().hint;
   renderLevels(); draw();
-  say(idx===0 ? "click one atom then another one in the same row." : cur().atoms.length+" atoms.");
+  say("tap a letter, tap a square.");
 }
 function renderLevels(){
   lvlBox.innerHTML="";
@@ -514,11 +642,16 @@ function renderLevels(){
 }
 document.getElementById("undo").addEventListener("click",function(){
   if(!hist.length){say("nothing to undo");return;}
-  bonds=hist.pop(); selected=-1; draw(); say("ok undone");
+  restore(hist.pop()); draw(); say("ok undone");
 });
 document.getElementById("clear").addEventListener("click",function(){
   if(!Object.keys(bonds).length) return;
-  hist.push(JSON.parse(JSON.stringify(bonds))); bonds={}; selected=-1; draw(); say("cleared");
+  hist.push(snap()); bonds={}; held=null; selected=-1; draw(); say("cleared");
+});
+document.getElementById("mMove").addEventListener("click",function(){setMode("move");say(trayLeft()+" to place");});
+document.getElementById("mBond").addEventListener("click",function(){setMode("bond");say("tap two in a row");});
+document.getElementById("tray").addEventListener("click",function(e){
+  if(e.target===this&&mode==="move"&&held&&held.from==="board")unplace(held.i);
 });
 document.addEventListener("keydown",function(e){
   if(e.key==="u"||e.key==="U") document.getElementById("undo").click();
